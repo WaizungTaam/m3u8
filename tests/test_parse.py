@@ -4,6 +4,7 @@ from m3u8.parse import Parser
 
 from . import playlist
 
+
 class TestParse(unittest.TestCase):
 
     def test_parse_simple(self):

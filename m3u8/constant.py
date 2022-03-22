@@ -34,13 +34,18 @@ EXT_X_INDEPENDENT_SEGMENTS = '#EXT-X-INDEPENDENT-SEGMENTS'
 EXT_X_START = '#EXT-X-START'
 
 
+class PlaylistType(Enum):
+    MEDIA = 'MEDIA'
+    MASTER = 'MASTER'
+
+
 class EncryptionMethod(Enum):
     NONE = 'NONE'
     AES_128 = 'AES-128'
     SAMPLE_AES = 'SAMPLE-AES'
 
 
-class PlaylistType(Enum):
+class MediaPlaylistType(Enum):
     EVENT = 'EVENT'
     VOD = 'VOD'
 
