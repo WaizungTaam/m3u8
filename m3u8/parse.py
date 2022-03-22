@@ -24,10 +24,13 @@ class Parser(object):
         self.media_sequence: int = 0
         self.media_playlist_type: Optional[constant.PlaylistType] = None
         self.medias: List[Dict[str, Any]] = []
+        self.streams: List[Dict[str, Any]] = []
+        self.current_stream: Optional[Tuple[int, Dict[str, Any]]] = None
         self.sessions: List[Dict[str, Any]] = []
         self.independent: bool = False
         self.start: Optional[Dict[str, Any]] = None
         self.playlist_type: Optional[constant.PlaylistType] = None
+        self.lineno: int = 0
 
     @staticmethod
     def _has_tag(line: str, tag: str) -> bool:
@@ -199,7 +202,22 @@ class Parser(object):
 
     def _parse_ext_x_stream_inf(self, line: str, tag: str):
         self._check_playlist_type(constant.PlaylistType.MASTER)
-        pass  # TODO
+        v = self._convert_dict(self._extract(line, tag), {
+            'BANDWIDTH': int,
+            'AVERAGE-BANDWIDTH': int,
+            'CODECS': str,
+            'RESOLUTION': constant.Resolution,
+            'FRAME-RATE': float,
+            'HDCP-LEVEL': constant.HdcpLevel,
+            'AUDIO': str,
+            'VIDEO': str,
+            'SUBTITLES': str,
+            'CLOSED-CAPTIONS': str,  # TODO: Could be an enumerated-string NONE
+        })
+        self._require(v, 'BANDWIDTH', tag)
+        # ? "Every EXT-X-STREAM-INF tag SHOULD include a CODECS attribute."
+        # self._require(v, 'CODECS', tag)
+        self.current_stream = (self.lineno, v)
 
     def _parse_ext_x_i_frame_stream_inf(self, line: str, tag: str):
         self._check_playlist_type(constant.PlaylistType.MASTER)
@@ -292,21 +310,40 @@ class Parser(object):
             if not parsed:
                 if self.endlist:
                     continue
-                if self.current_segment is None:
+                if self.current_segment is not None:
+                    duration, title = self.current_segment
+                    self.segments.append((duration, title, line))
+                    self.current_segment = None
+                elif self.current_stream is not None:
+                    lineno, stream = self.current_stream
+                    if self.lineno != lineno + 1:
+                        raise ParseError('Invalid EXT-X-STREAM-INF')
+                    stream['URI'] = line
+                    self.streams.append(stream)
+                    self.current_stream = None
+                else:
                     raise ParseError('Unknown line')
-                duration, title = self.current_segment
-                self.segments.append((duration, title, line))
-                self.current_segment = None
+
+            self.lineno += 1
 
         if self.playlist_type is None:
             raise ParseError('Unknown playlist type')
         if self.current_segment is not None:
             raise ParseError('Unknown media segment')
-        if self.version is None:
-            raise ParseError('Missing version')
-        if self.target_duration is None:
-            raise ParseError('Missing target duration')
-        for duration, _, _ in self.segments:
-            if round(duration) > self.target_duration:
-                raise ParseError('Media segment too long: '
-                                 f'{duration} > {self.target_duration}')
+        # ?
+        # A Playlist that contains tags or attributes that are not compatible
+        # with protocol version 1 MUST include an EXT-X-VERSION tag.
+        # if self.version is None:
+        #     raise ParseError('Missing version')
+
+        if self.playlist_type == constant.PlaylistType.MEDIA:
+            if self.target_duration is None:
+                raise ParseError('Missing target duration')
+            for duration, _, _ in self.segments:
+                if round(duration) > self.target_duration:
+                    raise ParseError('Media segment too long: '
+                                     f'{duration} > {self.target_duration}')
+        elif self.playlist_type == constant.PlaylistType.MASTER:
+            pass
+        else:
+            raise ParseError('Unknown playlist type')

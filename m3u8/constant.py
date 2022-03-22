@@ -60,3 +60,24 @@ class MediaType(Enum):
 class YesNo(Enum):
     YES = 'YES'
     NO = 'NO'
+
+
+class HdcpLevel(Enum):
+    TYPE_0 = 'TYPE-0'
+    NONE = 'NONE'
+
+
+class Resolution(object):
+
+    def __init__(self, s: str):
+        p = s.split('x')
+        if len(p) != 2:
+            raise ValueError('Invalid resolution')
+        w, h = p
+        try:
+            width = int(w)
+            height = int(h)
+        except ValueError:
+            raise ValueError('Invalid resolution')
+        self.width = width
+        self.height = height

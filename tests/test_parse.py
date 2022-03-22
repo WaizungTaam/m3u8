@@ -19,6 +19,10 @@ class TestParse(unittest.TestCase):
         parser = Parser(playlist.ENCRYPTED)
         parser.parse()
 
+    def test_parse_master(self):
+        parser = Parser(playlist.MASTER)
+        parser.parse()
+
 
 if __name__ == '__main__':
     unittest.main()
