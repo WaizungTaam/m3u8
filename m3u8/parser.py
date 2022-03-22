@@ -20,7 +20,7 @@ class Parser(object):
         self.current_segment: Optional[Tuple[float, str]] = None
         self.target_duration: Optional[int] = None
         self.endlist: bool = False
-        self.encryption: Optional[Dict[str, Any]] = None
+        self.key: Optional[Dict[str, Any]] = None
         self.media_sequence: int = 0
         self.media_playlist_type: Optional[constant.PlaylistType] = None
         self.medias: List[Dict[str, Any]] = []
@@ -124,7 +124,7 @@ class Parser(object):
                 raise ParseError('Unknown attributes for NONE encryption')
             return
         self._require(v, 'URI', tag)
-        self.encryption = v
+        self.key = v
         # TODO: Possible multiple x-keys?
 
     def _parse_ext_x_map(self, line: str, tag: str):

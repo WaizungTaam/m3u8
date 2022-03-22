@@ -1,6 +1,6 @@
 import unittest
 
-from m3u8.parse import Parser
+from m3u8.parser import Parser
 
 from . import playlist
 
