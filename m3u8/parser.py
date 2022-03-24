@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import component
 from . import constant
 from . import tag
 from . import util
@@ -36,6 +37,10 @@ class Parser(object, metaclass=ParserMeta):
         self.media_playlist_type: Optional[tag.PlaylistType] = None
         self.i_frames_only: Optional[tag.IFramesOnly] = None
 
+        self.medias: List[tag.Media] = []
+        self.stream_infs: List[tag.StreamInf] = []
+        self.current_stream_inf: Optional[tag.StreamInf] = None
+        self.variant_streams: List[component.VariantStream] = []
         self.i_frame_stream_infs: List[tag.IFrameStreamInf] = []
         self.session_datas: List[tag.SessionData] = []
         self.session_keys: List[tag.SessionKey] = []
@@ -114,10 +119,12 @@ class Parser(object, metaclass=ParserMeta):
         self.i_frames_only = tag.IFramesOnly.loads(line)
 
     def _parse_tag_media(self, line: str):
-        ...  # TODO
+        media = tag.Media.loads(line)
+        self.medias.append(media)
 
     def _parse_tag_stream_inf(self, line: str):
-        ...  # TODO
+        stream_inf = tag.StreamInf.loads(line)
+        self.stream_infs.append(stream_inf)
 
     def _parse_tag_i_frame_stream_inf(self, line: str):
         i_frame_stream_inf = tag.IFrameStreamInf.loads(line)
@@ -170,9 +177,13 @@ class Parser(object, metaclass=ParserMeta):
                     break
 
             if not line_parsed:
-                # TODO: Handle uri
-                pass
-                # raise ParseError('Unknown line')
+                if self.current_stream_inf is not None:
+                    self.variant_streams.append(
+                        component.VariantStream(self.current_stream_inf, line))
+                    self.current_stream_inf = None
+                else:
+                    ...
+                    # raise ParseError('Unknown line')
 
         if self.playlist_type == constant.PlaylistType.MEDIA:
             ...
@@ -180,3 +191,7 @@ class Parser(object, metaclass=ParserMeta):
             ...
         else:
             raise ParseError('Unknown playlist type')
+
+        if self.current_stream_inf is not None:
+            raise ParseError('Missing URI for STREAM-INF')
+        # TODO: Build VariantStream and RenditionGroup from medias
