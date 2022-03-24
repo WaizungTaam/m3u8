@@ -15,7 +15,9 @@ setuptools.setup(
     long_description=long_description,
     packages=['m3u8'],
     include_package_data=True,
-    install_requires=[],
+    install_requires=[
+        'python-dateutil',
+    ],
     extras_require={},
     python_requires='>=3.6',
 )

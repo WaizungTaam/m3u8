@@ -22,7 +22,3 @@ class TestParse(unittest.TestCase):
     def test_parse_master(self):
         parser = Parser(playlist.MASTER)
         parser.parse()
-
-
-if __name__ == '__main__':
-    unittest.main()

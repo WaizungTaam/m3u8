@@ -45,6 +45,11 @@ class EncryptionMethod(Enum):
     SAMPLE_AES = 'SAMPLE-AES'
 
 
+class SessionEncryptionMethod(Enum):
+    AES_128 = 'AES-128'
+    SAMPLE_AES = 'SAMPLE-AES'
+
+
 class MediaPlaylistType(Enum):
     EVENT = 'EVENT'
     VOD = 'VOD'
@@ -60,6 +65,10 @@ class MediaType(Enum):
 class YesNo(Enum):
     YES = 'YES'
     NO = 'NO'
+
+
+class Yes(Enum):
+    YES = 'YES'
 
 
 class HdcpLevel(Enum):
