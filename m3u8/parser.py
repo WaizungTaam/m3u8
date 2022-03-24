@@ -1,349 +1,182 @@
-from typing import Optional, Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import constant
+from . import tag
+from . import util
+from .error import ParseError
 
 
-class ParseError(Exception):
+class ParserMeta(type):
 
-    def __init__(self, message):
-        self.message = message
-        super().__init__(self.message)
+    def __new__(cls, name: str, bases: Tuple, attrs: Dict[str, Any]):
+        c = super().__new__(cls, name, bases, attrs)
+        c._tag_parsers = {}
+        tag_parser_prefix = '_parse_tag_'
+        for k, v in attrs.items():
+            if k.startswith(tag_parser_prefix) and callable(v):
+                c._tag_parsers[k[len(tag_parser_prefix):]] = v
+        return c
 
 
-class Parser(object):
+class Parser(object, metaclass=ParserMeta):
 
     def __init__(self, content: str):
-        self.content: str = content
+        self.content = content
 
-        self.version: Optional[int] = None
-        self.segments: List[Tuple[float, str, str]] = []
-        self.current_segment: Optional[Tuple[float, str]] = None
-        self.target_duration: Optional[int] = None
-        self.endlist: bool = False
-        self.key: Optional[Dict[str, Any]] = None
-        self.media_sequence: int = 0
-        self.media_playlist_type: Optional[constant.PlaylistType] = None
-        self.medias: List[Dict[str, Any]] = []
-        self.streams: List[Dict[str, Any]] = []
-        self.current_stream: Optional[Tuple[int, Dict[str, Any]]] = None
-        self.sessions: List[Dict[str, Any]] = []
-        self.independent: bool = False
-        self.start: Optional[Dict[str, Any]] = None
         self.playlist_type: Optional[constant.PlaylistType] = None
-        self.lineno: int = 0
+
+        self.version: Optional[tag.Version] = None
+
+        self.keys: List[tag.Key] = []
+
+        self.target_duration: Optional[tag.TargetDuration] = None
+        self.media_sequence: Optional[tag.MediaSequence] = None
+        self.discontinuity_sequence: Optional[tag.DiscontinuitySequence] = None
+        self.end_list: Optional[tag.EndList] = None
+        self.media_playlist_type: Optional[tag.PlaylistType] = None
+        self.i_frames_only: Optional[tag.IFramesOnly] = None
+
+        self.i_frame_stream_infs: List[tag.IFrameStreamInf] = []
+        self.session_datas: List[tag.SessionData] = []
+        self.session_keys: List[tag.SessionKey] = []
+
+        self.independent_segments: Optional[tag.IndependentSegments] = None
+        self.start: Optional[tag.Start] = None
 
     @staticmethod
-    def _has_tag(line: str, tag: str) -> bool:
-        return line == tag or line.startswith(tag + ':')
+    def _has_tag(line: str, name: str) -> bool:
+        return line == name or line.startswith(name + ':')
 
-    @staticmethod
-    def _extract(line: str, tag: str) -> str:
-        return line[len(tag)+1:].strip()
-
-    @staticmethod
-    def _convert_value(s: str, t: type) -> Any:
-        if t is str and len(s) >= 2 and s.startswith('"') and s.endswith('"'):
-            return s[1:-1]
-        try:
-            ret = t(s)
-        except Exception:
-            return ParseError(f'Invalid {t.__name__}: "{s}"')
-        else:
-            return ret
-
-    @staticmethod
-    def _convert_list(s: str, lt: List[type]) -> List[Any]:
-        values = [p.strip() for p in s.split(',')]
-        for i in range(min(len(values), len(lt))):
-            values[i] = Parser._convert_value(values[i], lt[i])
-        return values
-
-    @staticmethod
-    def _convert_dict(s: str, kt: Dict[str, type]) -> Dict[str, Any]:
-        values = {}
-        for p in s.split(','):
-            kv = p.split('=', 1)
-            if len(kv) != 2:
-                raise ParseError('Invalid key-value')
-            k, v = kv
-            values[k] = Parser._convert_value(v, kt[k]) if k in kt else v
-        return values
-
-    @staticmethod
-    def _require(d: Dict[str, Any], k: str, tag: str):
-        if k not in d:
-            raise ParseError(f'Missing {k} for {tag}')
-
-    def _check_playlist_type(self, playlist_type: constant.PlaylistType):
+    def _check_playlist_type(self,
+                             playlist_type: Optional[constant.PlaylistType]):
+        if playlist_type is None:
+            return
         if self.playlist_type is None:
             self.playlist_type = playlist_type
         else:
             if self.playlist_type != playlist_type:
-                raise ParseError('Invalid playlist type')
+                print(self.playlist_type, playlist_type)
+                raise ParseError('Mixed playlist type')
 
-    def _parse_ext_x_version(self, line: str, tag: str):
+    def _check_unique(self, name: str):
+        if getattr(self, name, None) is not None:
+            name = name.replace('_', ' ')
+            raise ParseError(f'Duplicated {name}')
+
+    def _parse_tag_version(self, line: str):
         if self.version is not None:
             raise ParseError('Duplicated version')
-        self.version = self._convert_value(self._extract(line, tag), int)
-        # TODO: validate min version
-        #       https://datatracker.ietf.org/doc/html/rfc8216#section-7
+        self.version = tag.Version.loads(line)
 
-    def _parse_extinf(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        if self.current_segment is not None:
-            raise ParseError('Invalid media segment')
-        if self.endlist:
-            return
-        v = self._convert_list(self._extract(line, tag), [float, str])
-        if len(v) < 1:
-            raise ParseError(f'Missing duration for {tag}')
-        duration = v[0]
-        title = v[1] if len(v) > 1 else ''
-        self.current_segment = (duration, title)
+    def _parse_tag_ext_inf(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_byterange(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_byte_range(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_discontinuity(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_discontinuity(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_key(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        v = self._convert_dict(self._extract(line, tag), {
-            'METHOD': constant.EncryptionMethod,
-            'URI': str,
-            'IV': int,
-            'KEYFORMAT': str,
-            'KEYFORMATVERSIONS': str,
-        })
-        self._require(v, 'METHOD', tag)
-        if v['METHOD'] == constant.EncryptionMethod.NONE:
-            if len(v) > 1:
-                raise ParseError('Unknown attributes for NONE encryption')
-            return
-        self._require(v, 'URI', tag)
-        self.key = v
-        # TODO: Possible multiple x-keys?
+    def _parse_tag_key(self, line: str):
+        self.keys.append(tag.Key.loads(line))
 
-    def _parse_ext_x_map(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_map(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_program_date_time(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_program_date_time(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_daterange(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_date_range(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_targetduration(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        if self.target_duration is not None:
-            raise ParseError('Duplicated target duration')
-        v = self._extract(line, tag)
-        self.target_duration = self._convert_value(v, int)
+    def _parse_tag_target_duration(self, line: str):
+        self._check_unique('target_duration')
+        self.target_duration = tag.TargetDuration.loads(line)
 
-    def _parse_ext_x_media_sequence(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        if len(self.segments) > 0 or self.current_segment is not None:
-            raise ParseError('Media sequence in wrong place')
-        v = self._extract(line, tag)
-        self.media_sequence = self._convert_value(v, int)
+    def _parse_tag_media_sequence(self, line: str):
+        self._check_unique('media_sequence')
+        self.media_sequence = tag.MediaSequence.loads(line)
 
-    def _parse_ext_x_discontinuity_sequence(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_discontinuity_sequence(self, line: str):
+        self._check_unique('discontinuity_sequence')
+        self.discontinuity_sequence = tag.DiscontinuitySequence.loads(line)
 
-    def _parse_ext_x_endlist(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        self.endlist = True
+    def _parse_tag_end_list(self, line: str):
+        self._check_unique('end_list')
+        self.end_list = tag.EndList.loads(line)
 
-    def _parse_ext_x_playlist_type(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        v = self._extract(line, tag)
-        self.media_playlist_type = self._convert_value(
-            v, constant.MediaPlaylistType)
+    def _parse_tag_playlist_type(self, line: str):
+        self._check_unique('media_playlist_type')
+        self.media_playlist_type = tag.PlaylistType.loads(line)
 
-    def _parse_ext_x_i_frames_only(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MEDIA)
-        pass  # TODO
+    def _parse_tag_i_frames_only(self, line: str):
+        self._check_unique('i_frames_only')
+        self.i_frames_only = tag.IFramesOnly.loads(line)
 
-    def _parse_ext_x_media(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MASTER)
-        v = self._convert_dict(self._extract(line, tag), {
-            'TYPE': constant.MediaType,
-            'URI': str,
-            'GROUP-ID': str,
-            'LANGUAGE': str,
-            'ASSOC-LANGUAGE': str,
-            'NAME': str,
-            'DEFAULT': constant.YesNo,
-            'AUTOSELECT': constant.YesNo,
-            'FORCED': constant.YesNo,
-            'INSTREAM-ID': str,
-            'CHARACTERISTICS': str,
-            'CHANNELS': str,
-        })
-        self._require(v, 'TYPE', tag)
-        self._require(v, 'GROUP-ID', tag)
-        self._require(v, 'NAME', tag)
-        if v['TYPE'] == constant.MediaType.CLOSED_CAPTIONS:
-            if 'URI' in v:
-                raise ParseError('Unknown URI for CLOSED-CAPTIONS')
-            if 'INSTREAM-ID' not in v:
-                raise ParseError('Missing INSTREAM-ID for CLOSED-CAPTIONS')
-        else:
-            if 'INSTREAM-ID' in v:
-                raise ParseError('Unknown INSTREAM-ID')
-        self.medias.append(v)
+    def _parse_tag_media(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_stream_inf(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MASTER)
-        v = self._convert_dict(self._extract(line, tag), {
-            'BANDWIDTH': int,
-            'AVERAGE-BANDWIDTH': int,
-            'CODECS': str,
-            'RESOLUTION': constant.Resolution,
-            'FRAME-RATE': float,
-            'HDCP-LEVEL': constant.HdcpLevel,
-            'AUDIO': str,
-            'VIDEO': str,
-            'SUBTITLES': str,
-            'CLOSED-CAPTIONS': str,  # TODO: Could be an enumerated-string NONE
-        })
-        self._require(v, 'BANDWIDTH', tag)
-        # ? "Every EXT-X-STREAM-INF tag SHOULD include a CODECS attribute."
-        # self._require(v, 'CODECS', tag)
-        self.current_stream = (self.lineno, v)
+    def _parse_tag_stream_inf(self, line: str):
+        ...  # TODO
 
-    def _parse_ext_x_i_frame_stream_inf(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MASTER)
-        pass  # TODO
+    def _parse_tag_i_frame_stream_inf(self, line: str):
+        i_frame_stream_inf = tag.IFrameStreamInf.loads(line)
+        self.i_frame_stream_infs.append(i_frame_stream_inf)
 
-    def _parse_ext_x_session_data(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MASTER)
-        v = self._convert_dict(self._extract(line, tag), {
-            'DATA-ID': str,
-            'VALUE': str,
-            'URI': str,
-            'LANGUAGE': str,
-        })
-        self._require(v, 'DATA-ID', tag)
-        if 'VALUE' not in v and 'URI' not in v:
-            raise ParseError(f'Missing VALUE or URI for {tag}')
-        if 'VALUE' in v and 'URI' in v:
-            raise ParseError(f'Cannot have both VALUE and URI for {tag}')
-        self.sessions.append(v)
+    def _parse_tag_session_data(self, line: str):
+        session_data = tag.SessionData.loads(line)
+        for s in self.session_datas:
+            if (session_data.data_id == s.data_id and
+                    session_data.language == s.language):
+                raise ParseError('Duplicated SESSION-DATA')
+        self.session_datas.append(session_data)
 
-    def _parse_ext_x_session_key(self, line: str, tag: str):
-        self._check_playlist_type(constant.PlaylistType.MASTER)
-        pass  # TODO
+    def _parse_tag_session_key(self, line: str):
+        session_key = tag.SessionKey.loads(line)
+        if session_key in self.session_keys:
+            raise ParseError('Duplicated SESSION-KEY')
+        self.session_keys.append(session_key)
 
-    def _parse_ext_x_independent_segments(self, line: str, tag: str):
-        self.independent = True
+    def _parse_tag_independent_segments(self, line: str):
+        self._check_unique('independent_segments')
+        self.independent_segments = tag.IndependentSegments.loads(line)
 
-    def _parse_ext_x_start(self, line: str, tag: str):
-        v = self._convert_dict(self._extract(line, tag), {
-            'TIME-OFFSET': float,
-            'PRECISE': constant.YesNo,
-        })
-        self._require(v, 'TIME-OFFSET', tag)
-        self.start = v
+    def _parse_tag_start(self, line: str):
+        self._check_unique('start')
+        self.start = tag.Start.loads(line)
 
     def parse(self):
         lines = [r.strip() for r in self.content.splitlines()]
+        lines = [r for r in lines if r]
 
         if not lines:
             raise ParseError('Empty input')
         if lines[0] != constant.EXTM3U:
-            raise ParseError('Invalid first line')
-
-        parse_funcs = {
-            constant.EXT_X_VERSION: self._parse_ext_x_version,
-
-            constant.EXTINF: self._parse_extinf,
-            constant.EXT_X_BYTERANGE: self._parse_ext_x_byterange,
-            constant.EXT_X_DISCONTINUITY: self._parse_ext_x_discontinuity,
-            constant.EXT_X_KEY: self._parse_ext_x_key,
-            constant.EXT_X_MAP: self._parse_ext_x_map,
-            constant.EXT_X_PROGRAM_DATE_TIME:
-                self._parse_ext_x_program_date_time,
-            constant.EXT_X_DATERANGE: self._parse_ext_x_daterange,
-
-            constant.EXT_X_TARGETDURATION: self._parse_ext_x_targetduration,
-            constant.EXT_X_MEDIA_SEQUENCE: self._parse_ext_x_media_sequence,
-            constant.EXT_X_DISCONTINUITY_SEQUENCE:
-                self._parse_ext_x_discontinuity_sequence,
-            constant.EXT_X_ENDLIST: self._parse_ext_x_endlist,
-            constant.EXT_X_PLAYLIST_TYPE: self._parse_ext_x_playlist_type,
-            constant.EXT_X_I_FRAMES_ONLY: self._parse_ext_x_i_frames_only,
-
-            constant.EXT_X_MEDIA: self._parse_ext_x_media,
-            constant.EXT_X_STREAM_INF: self._parse_ext_x_stream_inf,
-            constant.EXT_X_I_FRAME_STREAM_INF:
-                self._parse_ext_x_i_frame_stream_inf,
-            constant.EXT_X_SESSION_DATA: self._parse_ext_x_session_data,
-            constant.EXT_X_SESSION_KEY: self._parse_ext_x_session_key,
-
-            constant.EXT_X_INDEPENDENT_SEGMENTS:
-                self._parse_ext_x_independent_segments,
-            constant.EXT_X_START: self._parse_ext_x_start,
-        }
+            raise ParseError('Unknown file type')
 
         for line in lines[1:]:
-            line = line.strip()
-            if not line:
-                continue
             if line.startswith('#') and not line.startswith('#EXT'):
                 continue
 
-            parsed = False
-            for tag, func in parse_funcs.items():
-                if self._has_tag(line, tag):
-                    func(line, tag)
-                    parsed = True
+            line_parsed = False
+            for t in tag.all_tags:
+                if self._has_tag(line, t.name):
+                    k = util.camel_to_snake(t.__name__)
+                    if k not in self._tag_parsers:
+                        raise ParseError(f'Unknown parse for {t.name}')
+                    self._check_playlist_type(t.playlist_type)
+                    self._tag_parsers[k](self, line)
+                    line_parsed = True
                     break
 
-            if not parsed:
-                if self.endlist:
-                    continue
-                if self.current_segment is not None:
-                    duration, title = self.current_segment
-                    self.segments.append((duration, title, line))
-                    self.current_segment = None
-                elif self.current_stream is not None:
-                    lineno, stream = self.current_stream
-                    if self.lineno != lineno + 1:
-                        raise ParseError('Invalid EXT-X-STREAM-INF')
-                    stream['URI'] = line
-                    self.streams.append(stream)
-                    self.current_stream = None
-                else:
-                    raise ParseError('Unknown line')
-
-            self.lineno += 1
-
-        if self.playlist_type is None:
-            raise ParseError('Unknown playlist type')
-        if self.current_segment is not None:
-            raise ParseError('Unknown media segment')
-        # ?
-        # A Playlist that contains tags or attributes that are not compatible
-        # with protocol version 1 MUST include an EXT-X-VERSION tag.
-        # if self.version is None:
-        #     raise ParseError('Missing version')
+            if not line_parsed:
+                # TODO: Handle uri
+                pass
+                # raise ParseError('Unknown line')
 
         if self.playlist_type == constant.PlaylistType.MEDIA:
-            if self.target_duration is None:
-                raise ParseError('Missing target duration')
-            for duration, _, _ in self.segments:
-                if round(duration) > self.target_duration:
-                    raise ParseError('Media segment too long: '
-                                     f'{duration} > {self.target_duration}')
+            ...
         elif self.playlist_type == constant.PlaylistType.MASTER:
-            pass
+            ...
         else:
             raise ParseError('Unknown playlist type')

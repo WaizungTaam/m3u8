@@ -111,6 +111,11 @@ class Tag(object):
     def loads(cls, line: str) -> 'Tag':
         raise NotImplementedError
 
+    def __eq__(self, other: Any) -> bool:
+        if type(other) is type(self):
+            return self.__dict__ == other.__dict__
+        return False
+
 
 class Version(Tag):
     name = constant.EXT_X_VERSION
@@ -598,3 +603,6 @@ class Start(Tag):
     @classmethod
     def loads(cls, line: str) -> 'Start':
         return cls(**convert_dict(cls._extract(line), cls.attrs))
+
+
+all_tags = Tag.__subclasses__()
