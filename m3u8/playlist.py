@@ -1,6 +1,8 @@
 import os
 from typing import List, Optional, Type, TypeVar, Union
 
+import requests
+
 from .parser import Parser
 from . import component
 from . import constant
@@ -51,8 +53,10 @@ class Playlist(object):
         return cls.from_str(s)
 
     @classmethod
-    def from_url(cls, url: str) -> P:
-        ...  # TODO
+    def from_url(cls, url: str, **kwargs) -> P:
+        res = requests.get(url, **kwargs)
+        res.raise_for_status()
+        return cls.from_bytes(res.content)
 
 
 class MediaPlaylist(Playlist):

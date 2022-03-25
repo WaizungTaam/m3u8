@@ -17,6 +17,7 @@ setuptools.setup(
     include_package_data=True,
     install_requires=[
         'python-dateutil',
+        'requests',
     ],
     extras_require={},
     python_requires='>=3.6',
