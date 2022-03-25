@@ -39,7 +39,7 @@ class Parser(object, metaclass=ParserMeta):
 
         self.medias: List[tag.Media] = []
         self.stream_infs: List[tag.StreamInf] = []
-        self.current_stream_inf: Optional[tag.StreamInf] = None
+        self.current_variant_stream: Optional[Dict[str, Any]] = None
         self.variant_streams: List[component.VariantStream] = []
         self.i_frame_stream_infs: List[tag.IFrameStreamInf] = []
         self.session_datas: List[tag.SessionData] = []
@@ -124,7 +124,10 @@ class Parser(object, metaclass=ParserMeta):
 
     def _parse_tag_stream_inf(self, line: str):
         stream_inf = tag.StreamInf.loads(line)
+        if self.current_variant_stream is not None:
+            raise ParseError('Unexpected STREAM-INF')
         self.stream_infs.append(stream_inf)
+        self.current_variant_stream = {'info': stream_inf}
 
     def _parse_tag_i_frame_stream_inf(self, line: str):
         i_frame_stream_inf = tag.IFrameStreamInf.loads(line)
@@ -152,6 +155,31 @@ class Parser(object, metaclass=ParserMeta):
         self._check_unique('start')
         self.start = tag.Start.loads(line)
 
+    def _patch_variant_streams(self):
+        rendition_groups: Dict[Tuple[str, constant.MediaType],
+                               component.RenditionGroup] = {}
+        for media in self.medias:
+            key = (media.group_id, media.type)
+            if key not in rendition_groups:
+                rendition_groups[key] = component.RenditionGroup(
+                    media.group_id, media.type)
+            rendition_groups[key].renditions.append(media)
+        media_types: List[Tuple[str, constant.MediaType]] = [
+            ('audio', constant.MediaType.AUDIO),
+            ('video', constant.MediaType.VIDEO),
+            ('subtitles', constant.MediaType.SUBTITLES),
+            ('closed_captions', constant.MediaType.CLOSED_CAPTIONS),
+        ]
+        for i, variant_stream in enumerate(self.variant_streams):
+            for name, media_type in media_types:
+                group_id: Optional[str] = getattr(
+                    variant_stream.info, name, None)
+                if group_id is not None:
+                    group = rendition_groups.get((group_id, media_type), None)
+                    if group is None:
+                        raise ParseError(f'Group for {media_type} not found')
+                    setattr(self.variant_streams[i], name, group)
+
     def parse(self):
         lines = [r.strip() for r in self.content.splitlines()]
         lines = [r for r in lines if r]
@@ -177,10 +205,11 @@ class Parser(object, metaclass=ParserMeta):
                     break
 
             if not line_parsed:
-                if self.current_stream_inf is not None:
+                if self.current_variant_stream is not None:
+                    self.current_variant_stream['uri'] = line
                     self.variant_streams.append(
-                        component.VariantStream(self.current_stream_inf, line))
-                    self.current_stream_inf = None
+                        component.VariantStream(**self.current_variant_stream))
+                    self.current_variant_stream = None
                 else:
                     ...
                     # raise ParseError('Unknown line')
@@ -192,6 +221,6 @@ class Parser(object, metaclass=ParserMeta):
         else:
             raise ParseError('Unknown playlist type')
 
-        if self.current_stream_inf is not None:
-            raise ParseError('Missing URI for STREAM-INF')
-        # TODO: Build VariantStream and RenditionGroup from medias
+        if self.current_variant_stream is not None:
+            raise ParseError('Incomplete variant stream')
+        self._patch_variant_streams()
