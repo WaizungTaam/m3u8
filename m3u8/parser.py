@@ -29,6 +29,10 @@ class Parser(object, metaclass=ParserMeta):
         self.version: Optional[tag.Version] = None
 
         self.keys: List[tag.Key] = []
+        self.maps: List[tag.Map] = []
+        self.date_ranges: List[tag.DateRange] = []
+        self.current_media_segment: Dict[str, Any] = {}
+        self.media_segments: List[component.MediaSegment] = []
 
         self.target_duration: Optional[tag.TargetDuration] = None
         self.media_sequence: Optional[tag.MediaSequence] = None
@@ -39,7 +43,7 @@ class Parser(object, metaclass=ParserMeta):
 
         self.medias: List[tag.Media] = []
         self.stream_infs: List[tag.StreamInf] = []
-        self.current_variant_stream: Optional[Dict[str, Any]] = None
+        self.current_variant_stream: Dict[str, Any] = {}
         self.variant_streams: List[component.VariantStream] = []
         self.i_frame_stream_infs: List[tag.IFrameStreamInf] = []
         self.session_datas: List[tag.SessionData] = []
@@ -60,7 +64,6 @@ class Parser(object, metaclass=ParserMeta):
             self.playlist_type = playlist_type
         else:
             if self.playlist_type != playlist_type:
-                print(self.playlist_type, playlist_type)
                 raise ParseError('Mixed playlist type')
 
     def _check_unique(self, name: str):
@@ -74,25 +77,33 @@ class Parser(object, metaclass=ParserMeta):
         self.version = tag.Version.loads(line)
 
     def _parse_tag_ext_inf(self, line: str):
-        ...  # TODO
+        if 'info' in self.current_media_segment:
+            raise ParseError('Unexpected EXTINF')
+        self.current_media_segment['info'] = tag.ExtInf.loads(line)
 
     def _parse_tag_byte_range(self, line: str):
-        ...  # TODO
+        if 'byte_range' in self.current_media_segment:
+            raise ParseError('Unexpected BYTERANGE')
+        self.current_media_segment['byte_range'] = tag.ByteRange.loads(line)
 
     def _parse_tag_discontinuity(self, line: str):
-        ...  # TODO
+        discontinuity = tag.Discontinuity.loads(line)
+        self.current_media_segment['discontinuity'] = discontinuity
 
     def _parse_tag_key(self, line: str):
         self.keys.append(tag.Key.loads(line))
 
     def _parse_tag_map(self, line: str):
-        ...  # TODO
+        self.maps.append(tag.Map.loads(line))
 
     def _parse_tag_program_date_time(self, line: str):
-        ...  # TODO
+        if 'program_date_time' in self.current_media_segment:
+            raise ParseError('Unexpected PROGRAM-DATE-TIME')
+        self.current_media_segment['program_date_time'] = \
+            tag.ProgramDateTime.loads(line)
 
     def _parse_tag_date_range(self, line: str):
-        ...  # TODO
+        self.date_ranges.append(tag.DateRange.loads(line))
 
     def _parse_tag_target_duration(self, line: str):
         self._check_unique('target_duration')
@@ -124,10 +135,10 @@ class Parser(object, metaclass=ParserMeta):
 
     def _parse_tag_stream_inf(self, line: str):
         stream_inf = tag.StreamInf.loads(line)
-        if self.current_variant_stream is not None:
+        if 'info' in self.current_variant_stream:
             raise ParseError('Unexpected STREAM-INF')
         self.stream_infs.append(stream_inf)
-        self.current_variant_stream = {'info': stream_inf}
+        self.current_variant_stream['info'] = stream_inf
 
     def _parse_tag_i_frame_stream_inf(self, line: str):
         i_frame_stream_inf = tag.IFrameStreamInf.loads(line)
@@ -205,14 +216,25 @@ class Parser(object, metaclass=ParserMeta):
                     break
 
             if not line_parsed:
-                if self.current_variant_stream is not None:
+                if self.current_media_segment:
+                    self.current_media_segment['uri'] = line
+                    if self.keys:
+                        self.current_media_segment['key'] = self.keys[-1]
+                    if self.maps:
+                        self.current_media_segment['map'] = self.maps[-1]
+                    if self.date_ranges:
+                        self.current_media_segment['date_range'] = \
+                            self.date_ranges[-1]
+                    self.media_segments.append(
+                        component.MediaSegment(**self.current_media_segment))
+                    self.current_media_segment = {}
+                elif self.current_variant_stream:
                     self.current_variant_stream['uri'] = line
                     self.variant_streams.append(
                         component.VariantStream(**self.current_variant_stream))
-                    self.current_variant_stream = None
+                    self.current_variant_stream = {}
                 else:
-                    ...
-                    # raise ParseError('Unknown line')
+                    raise ParseError('Unknown line')
 
         if self.playlist_type == constant.PlaylistType.MEDIA:
             ...
@@ -221,6 +243,6 @@ class Parser(object, metaclass=ParserMeta):
         else:
             raise ParseError('Unknown playlist type')
 
-        if self.current_variant_stream is not None:
+        if self.current_variant_stream:
             raise ParseError('Incomplete variant stream')
         self._patch_variant_streams()
