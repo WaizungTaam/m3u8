@@ -15,7 +15,13 @@ $ pip install -e git+https://github.com/WaizungTaam/m3u8
 ## Example
 
 ```python
+from m3u8 import MediaPlaylist
 
+
+playlist = MediaPlaylist.from_file('index.m3u8')
+
+for segment in playlist.media_segments:
+    print(segment.uri)
 ```
 
 
